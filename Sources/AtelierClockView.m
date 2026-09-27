@@ -33,6 +33,14 @@ static void ACStroke(NSPoint a, NSPoint b, CGFloat width, NSColor *color) {
     p.lineWidth = width; p.lineCapStyle = NSLineCapStyleRound;
     [p moveToPoint:a]; [p lineToPoint:b]; [p stroke];
 }
+// As ACStroke but with flat (butt) end caps, so a line terminates flush at its
+// endpoints instead of bulging half a line width past them.
+static void ACStrokeFlat(NSPoint a, NSPoint b, CGFloat width, NSColor *color) {
+    [color setStroke];
+    NSBezierPath *p = [NSBezierPath bezierPath];
+    p.lineWidth = width; p.lineCapStyle = NSLineCapStyleButt;
+    [p moveToPoint:a]; [p lineToPoint:b]; [p stroke];
+}
 static void ACDot(CGFloat radius, NSColor *color) {
     [color setFill]; [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(-radius,-radius,2*radius,2*radius)] fill];
 }
@@ -245,6 +253,16 @@ static const ACPalette *ACPalettesForDesign(NSInteger design, NSInteger *count) 
     }
 }
 static NSColor *ACR(const ACPalette *p, BOOL dark, ACRole role) { return ACColor(p->c[dark?1:0][role]); }
+// Bill lume keeps a glow-paint character while following the currently selected
+// Bill palette: blend the dial face with the classic lume tint, then shift the
+// intensity for light/dark appearance.
+static NSColor *ACBillLume(const ACPalette *p, BOOL dark) {
+    NSColor *face=ACR(p,dark,ACFace);
+    NSColor *legacy=ACR(p,dark,ACLume);
+    NSColor *themed=ACMix(face,legacy,0.58);
+    return dark ? ACMix(themed,[NSColor blackColor],0.20)
+                : ACMix(themed,[NSColor whiteColor],0.28);
+}
 
 static NSString * const kDesignNames[] = { @"Atelier", @"Bill", @"Los Angeles", @"Ikko", @"Georg" };
 static const NSInteger ACAutomaticDesign = 5;
@@ -516,15 +534,15 @@ static os_log_t ACOptionsLog(void) {
 - (void)drawBillStatic:(const ACPalette *)p dark:(BOOL)dark {
     NSColor *ink = ACR(p,dark,ACInk);
     NSColor *muted = ACR(p,dark,ACMuted);
-    NSColor *lume = ACR(p,dark,ACLume);
+    NSColor *lume = ACBillLume(p,dark);
     // Faint outer boundary at the minute track.
     NSBezierPath *ring=[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(-286,-286,572,572)];
     ring.lineWidth=1.0; [muted setStroke]; [ring stroke];
     // Long fine hour lines with short minute ticks between them.
     for (NSInteger i=0;i<60;i++) {
         CGFloat a=i*M_PI/30.0;
-        if (i%5==0) ACStroke(ACPoint(168,a),ACPoint(286,a),1.7,ink);     // long hour line
-        else        ACStroke(ACPoint(274,a),ACPoint(286,a),1.3,muted);   // short minute tick
+        if (i%5==0) ACStrokeFlat(ACPoint(168,a),ACPoint(286,a),1.7,ink);   // long hour line
+        else        ACStrokeFlat(ACPoint(274,a),ACPoint(286,a),1.3,muted); // short minute tick
     }
     // Luminous dots sit just inside the minute track: double at 12, singles at 3/6/9.
     CGFloat dotRadius=260;
@@ -542,7 +560,7 @@ static os_log_t ACOptionsLog(void) {
     NSColor *edge=ACR(p,dark,ACAccentA);
     NSColor *mid=ACR(p,dark,ACHand);
     NSColor *hi=ACR(p,dark,ACAccentB);
-    NSColor *inset=ACR(p,dark,ACLume);
+    NSColor *inset=ACBillLume(p,dark);
     NSColor *seconds=ACR(p,dark,ACSeconds);
     // Soft shared shadow under the metal hands.
     [NSGraphicsContext saveGraphicsState];
