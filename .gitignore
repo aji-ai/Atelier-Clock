@@ -1,0 +1,9 @@
+# Generated native products and helper/test executables
+/build/
+
+# Finder and editor scratch files
+.DS_Store
+._*
+*.swp
+*~
+/tmp
