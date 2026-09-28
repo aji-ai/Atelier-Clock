@@ -27,9 +27,9 @@ Choose installation for your user, then on macOS 26:
 
 1. Open **System Settings** and select **Wallpaper**.
 
-2. Then select **Screen Saver…**/
+2. Then select **Screen Saver…**
 
-![](docs/screensnaps/01settings.png_)
+![](docs/screensnaps/01settings.png)
 
 3. Select **Custom** if needed, and then scroll down to the **Other** section. 
 ![](docs/screensnaps/02wallpaper.png)
