@@ -409,23 +409,34 @@ static os_log_t ACOptionsLog(void) {
     BOOL dark=[self isDark];
     const ACPalette *p=[self currentPalette];
     // On macOS 14+ the legacyScreenSaver host reports -bounds in backing pixels
-    // while the graphics context is Retina-scaled, which would draw the clock at 2x
-    // in a corner. Derive geometry from the context's real drawable (its clip box,
-    // in points); in every other host this equals -bounds, so behavior is unchanged.
+    // while the graphics context is Retina-scaled. Derive geometry from the context's
+    // real drawable (its clip box, in points) instead of -bounds.
     NSRect area=self.bounds;
+    // Per-axis device scale of the context. The small System Settings preview can
+    // set an anisotropic CTM (its x and y map to different pixel counts); a uniform
+    // scale would then render the dial as an ellipse. Measure both axes and size the
+    // clock in real pixels so it stays perfectly round in every host.
+    CGFloat sx=1, sy=1;
     CGContextRef cg=[NSGraphicsContext currentContext].CGContext;
     if (cg) {
         CGRect clip=CGContextGetClipBoundingBox(cg);
         if (clip.size.width>1 && clip.size.height>1) area=NSRectFromCGRect(clip);
+        CGAffineTransform ctm=CGContextGetCTM(cg);
+        sx=hypot(ctm.a,ctm.b); if (sx<=0) sx=1;
+        sy=hypot(ctm.c,ctm.d); if (sy<=0) sy=1;
     }
     [ACR(p,dark,ACSurround) setFill]; NSRectFill(area);
-    CGFloat diameter=MIN(area.size.width,area.size.height)*_scale;
-    if (diameter<1) return;
+    // Largest round circle (in pixels) that fits the drawable, then the shared
+    // per-640-unit pixel scale. Splitting it back out by axis cancels the CTM's
+    // anisotropy, so equal 640-space lengths cover equal pixel counts on screen.
+    CGFloat diameterPx=MIN(area.size.width*sx,area.size.height*sy)*_scale;
+    if (diameterPx<1) return;
+    CGFloat unitPx=diameterPx/640.0;
     NSTimeInterval epoch=now.timeIntervalSince1970;
     NSPoint center=NSMakePoint(NSMidX(area),NSMidY(area));
     [NSGraphicsContext saveGraphicsState];
     NSAffineTransform *transform=[NSAffineTransform transform]; [transform translateXBy:center.x yBy:center.y];
-    [transform scaleBy:diameter/640.0]; [transform concat];
+    [transform scaleXBy:unitPx/sx yBy:unitPx/sy]; [transform concat];
     // Cache static vector artwork as a resolution-aware image; animate only the hands.
     if (!_dialCache || !NSEqualSizes(_cachedSize,area.size) || _cachedDark!=dark ||
         _cachedDesign!=_design || _cachedPalette!=_palette || _cachedNumerals!=_numerals) {
