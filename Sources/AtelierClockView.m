@@ -4,6 +4,20 @@
 
 static NSString * const ACModule = @"local.atelier.clock";
 
+// Every five minutes, dissolve to the next position over ten seconds.
+// Coordinates are fractions of a small radius around the center, in device pixels.
+typedef struct { NSPoint from, to; CGFloat mix; } ACDisplayShift;
+static ACDisplayShift ACDisplayShiftForElapsed(NSTimeInterval elapsed, BOOL reducedMotion) {
+    static const NSPoint positions[]={{0,0},{0.8,0.6},{-0.6,0.8},{-0.8,-0.6},{0.6,-0.8}};
+    elapsed=MAX(0,elapsed);
+    double cycle=floor(elapsed/300.0);
+    NSUInteger index=(NSUInteger)fmod(cycle,5);
+    if (cycle==0) return (ACDisplayShift){positions[0],positions[0],0};
+    CGFloat t=MIN(1,(elapsed-cycle*300.0)/10.0);
+    if (reducedMotion) t=1;
+    return (ACDisplayShift){positions[(index+4)%5],positions[index],t*t*(3-2*t)};
+}
+
 // Deterministic value noise for original procedural wood. No photographs,
 // sampled image data, or external assets are used to generate these materials.
 static double ACWoodNoise(NSInteger x, NSInteger y, uint32_t seed) {
@@ -325,6 +339,7 @@ static os_log_t ACOptionsLog(void) {
     ScreenSaverDefaults *_defaults;
     NSInteger _design, _palette, _appearance, _movement;
     CGFloat _scale;
+    NSTimeInterval _displayStart;
     BOOL _automatic, _numerals;
     NSCalendar *_dailyCalendar;
     NSUInteger _dailyDay;
@@ -339,12 +354,14 @@ static os_log_t ACOptionsLog(void) {
     NSButton *_numeralControl;
 #ifdef AC_HARNESS
     NSDate *_acDate;
+    NSNumber *_acDisplayElapsed;
 #endif
 }
 
 - (instancetype)initWithFrame:(NSRect)frame isPreview:(BOOL)preview {
     self = [super initWithFrame:frame isPreview:preview];
     if (self) {
+        _displayStart=[NSProcessInfo processInfo].systemUptime;
         _defaults = [ScreenSaverDefaults defaultsForModuleWithName:ACModule];
         [_defaults registerDefaults:@{@"design":@0, @"palette":@0, @"appearance":@2,
                                      @"movement":@0, @"size":@0.84, @"automatic":@NO, @"numerals":@NO}];
@@ -371,7 +388,10 @@ static os_log_t ACOptionsLog(void) {
     _dialCache = nil;
     self.needsDisplay = YES;
 }
-- (void)startAnimation { [self reloadPreferences]; [super startAnimation]; }
+- (void)startAnimation {
+    _displayStart=[NSProcessInfo processInfo].systemUptime;
+    [self reloadPreferences]; [super startAnimation];
+}
 - (void)animateOneFrame { self.needsDisplay = YES; }
 - (NSDate *)clockDate {
 #ifdef AC_HARNESS
@@ -425,18 +445,13 @@ static os_log_t ACOptionsLog(void) {
         sx=hypot(ctm.a,ctm.b); if (sx<=0) sx=1;
         sy=hypot(ctm.c,ctm.d); if (sy<=0) sy=1;
     }
-    [ACR(p,dark,ACSurround) setFill]; NSRectFill(area);
     // Largest round circle (in pixels) that fits the drawable, then the shared
     // per-640-unit pixel scale. Splitting it back out by axis cancels the CTM's
     // anisotropy, so equal 640-space lengths cover equal pixel counts on screen.
     CGFloat diameterPx=MIN(area.size.width*sx,area.size.height*sy)*_scale;
-    if (diameterPx<1) return;
+    if (diameterPx<1) { [ACR(p,dark,ACSurround) setFill]; NSRectFill(area); return; }
     CGFloat unitPx=diameterPx/640.0;
     NSTimeInterval epoch=now.timeIntervalSince1970;
-    NSPoint center=NSMakePoint(NSMidX(area),NSMidY(area));
-    [NSGraphicsContext saveGraphicsState];
-    NSAffineTransform *transform=[NSAffineTransform transform]; [transform translateXBy:center.x yBy:center.y];
-    [transform scaleXBy:unitPx/sx yBy:unitPx/sy]; [transform concat];
     // Cache static vector artwork as a resolution-aware image; animate only the hands.
     if (!_dialCache || !NSEqualSizes(_cachedSize,area.size) || _cachedDark!=dark ||
         _cachedDesign!=_design || _cachedPalette!=_palette || _cachedNumerals!=_numerals) {
@@ -450,15 +465,38 @@ static os_log_t ACOptionsLog(void) {
         _cachedSize=area.size; _cachedDark=dark;
         _cachedDesign=_design; _cachedPalette=_palette; _cachedNumerals=_numerals;
     }
-    [_dialCache drawInRect:NSMakeRect(-320,-320,640,640) fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1];
     NSDateComponents *c=[[NSCalendar currentCalendar] components:NSCalendarUnitHour|NSCalendarUnitMinute|NSCalendarUnitSecond fromDate:now];
     double seconds=c.second+(epoch-floor(epoch));
     double handSeconds=_movement==1 ? floor(seconds*8)/8 : (_movement==2 ? floor(seconds) : seconds);
     double hourAngle=((c.hour%12)+c.minute/60.0+seconds/3600.0)*M_PI/6;
     double minuteAngle=(c.minute+seconds/60.0)*M_PI/30;
     double secondAngle=handSeconds*M_PI/30;
-    [self drawHands:p dark:dark hour:hourAngle minute:minuteAngle second:secondAngle];
-    [NSGraphicsContext restoreGraphicsState];
+    NSTimeInterval elapsed=[NSProcessInfo processInfo].systemUptime-_displayStart;
+#ifdef AC_HARNESS
+    if (_acDisplayElapsed) elapsed=_acDisplayElapsed.doubleValue;
+#endif
+    ACDisplayShift shift=self.isPreview ? (ACDisplayShift){NSZeroPoint,NSZeroPoint,0} :
+        ACDisplayShiftForElapsed(elapsed,[NSWorkspace sharedWorkspace].accessibilityDisplayShouldReduceMotion);
+    CGFloat radius=MIN(area.size.width*sx,area.size.height*sy)*0.012;
+    BOOL dissolving=cg && shift.mix>0 && shift.mix<1;
+    for (NSInteger pass=0;pass<(dissolving?2:1);pass++) {
+        NSPoint offset=pass==1 || shift.mix>=1 ? shift.to : shift.from;
+        [NSGraphicsContext saveGraphicsState];
+        if (pass==1) {
+            // Blend a complete opaque scene, so overlapping hands and markers
+            // keep their brightness instead of being alpha-composited twice.
+            CGContextSetAlpha(cg,shift.mix);
+            CGContextBeginTransparencyLayer(cg,NULL);
+        }
+        [ACR(p,dark,ACSurround) setFill]; NSRectFill(area);
+        NSAffineTransform *transform=[NSAffineTransform transform];
+        [transform translateXBy:NSMidX(area)+offset.x*radius/sx yBy:NSMidY(area)+offset.y*radius/sy];
+        [transform scaleXBy:unitPx/sx yBy:unitPx/sy]; [transform concat];
+        [_dialCache drawInRect:NSMakeRect(-320,-320,640,640) fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1];
+        [self drawHands:p dark:dark hour:hourAngle minute:minuteAngle second:secondAngle];
+        if (pass==1) CGContextEndTransparencyLayer(cg);
+        [NSGraphicsContext restoreGraphicsState];
+    }
 }
 
 - (void)drawStatic:(const ACPalette *)p dark:(BOOL)dark {
@@ -961,5 +999,6 @@ static os_log_t ACOptionsLog(void) {
 }
 - (void)acSetDate:(NSDate *)date { _acDate=date; }
 - (void)acSetScale:(CGFloat)scale { _scale=scale; _dialCache=nil; }
+- (void)acSetDisplayElapsed:(NSTimeInterval)elapsed { _acDisplayElapsed=@(elapsed); }
 #endif
 @end

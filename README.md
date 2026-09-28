@@ -62,7 +62,9 @@ The build creates both products in `build/` and signs them locally. It does not 
 | Ikko | Clear everyday numerals and rounded hands |
 | Georg | A recessed dial, dot markers, and slender hands |
 
-Choose a palette, Light / Dark / Follow System appearance, clock size, and Smooth / Mechanical / Quartz movement. Optional hour numerals start off for new installations; Ikko's numerals are part of its dial. The clock stays centered.
+Choose a palette, Light / Dark / Follow System appearance, clock size, and Smooth / Mechanical / Quartz movement. Optional hour numerals start off for new installations; Ikko's numerals are part of its dial.
+
+Every five minutes, the clock gently cross-fades over ten seconds to a slightly different position near the center. This reduces persistent pixel patterns but does not guarantee protection from burn-in. With Reduce Motion enabled, the position changes without a dissolve. The small System Settings preview stays centered.
 
 **Auto · Daily**, at the bottom of the Design menu, chooses a design and palette for each local calendar day. It stays consistent across restarts and between the app and screensaver, changes at midnight, and never repeats the previous day's design.
 

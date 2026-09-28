@@ -27,6 +27,62 @@ static NSDate *ACDate(NSString *iso) {
 }
 static NSInteger ACInt(id view, NSString *key) { return [[view valueForKey:key] integerValue]; }
 
+static NSBitmapImageRep *ACShiftFrame(AtelierClockView *view, NSTimeInterval elapsed) {
+    [view acSetDisplayElapsed:elapsed];
+    NSBitmapImageRep *bitmap=[[NSBitmapImageRep alloc] initWithBitmapDataPlanes:NULL
+        pixelsWide:256 pixelsHigh:256 bitsPerSample:8 samplesPerPixel:4 hasAlpha:YES
+        isPlanar:NO colorSpaceName:NSDeviceRGBColorSpace bytesPerRow:0 bitsPerPixel:0];
+    [NSGraphicsContext saveGraphicsState];
+    [NSGraphicsContext setCurrentContext:[NSGraphicsContext graphicsContextWithBitmapImageRep:bitmap]];
+    [view drawRect:NSMakeRect(0,0,256,256)];
+    [NSGraphicsContext restoreGraphicsState];
+    return bitmap;
+}
+static void ACTestDisplayShift(void) {
+    ACDisplayShift initial=ACDisplayShiftForElapsed(299.99,NO);
+    assert(NSEqualPoints(initial.from,NSZeroPoint) && initial.mix==0);
+    assert(ACDisplayShiftForElapsed(300,NO).mix==0);
+    assert(ACDisplayShiftForElapsed(305,NO).mix==0.5);
+    assert(ACDisplayShiftForElapsed(310,NO).mix==1);
+    assert(ACDisplayShiftForElapsed(300,YES).mix==1);
+    for (NSInteger cycle=1;cycle<100;cycle++) {
+        ACDisplayShift before=ACDisplayShiftForElapsed(cycle*300-0.001,NO);
+        ACDisplayShift next=ACDisplayShiftForElapsed(cycle*300,NO);
+        NSPoint held=before.mix==1 ? before.to : before.from;
+        assert(NSEqualPoints(held,next.from));
+        assert(!NSEqualPoints(next.from,next.to));
+        // At maximum clock size, even the full 640-unit artwork stays inside.
+        assert(hypot(next.to.x,next.to.y)<=1.00001);
+        assert(0.92/2+fabs(next.to.x)*0.012<0.5);
+        assert(0.92/2+fabs(next.to.y)*0.012<0.5);
+    }
+    AtelierClockView *view=[[AtelierClockView alloc] initWithFrame:NSMakeRect(0,0,256,256) isPreview:NO];
+    [view acSetDate:ACDate(@"2026-01-01T10:10:30Z")];
+    BOOL reduce=[NSWorkspace sharedWorkspace].accessibilityDisplayShouldReduceMotion;
+    for (NSInteger design=0;design<5;design++) {
+        [view acConfigureDesign:design palette:0 appearance:0 numerals:NO];
+        NSBitmapImageRep *a=ACShiftFrame(view,0), *b=ACShiftFrame(view,310), *mid=ACShiftFrame(view,305);
+        NSUInteger changed=0;
+        for (NSInteger y=0;y<256;y++) for (NSInteger x=0;x<256;x++) {
+            NSUInteger ca[4],cb[4],cm[4];
+            [a getPixel:ca atX:x y:y]; [b getPixel:cb atX:x y:y]; [mid getPixel:cm atX:x y:y];
+            assert(ca[3]==255 && cb[3]==255 && cm[3]==255);
+            for (NSInteger channel=0;channel<3;channel++) {
+                CGFloat expected=reduce ? cb[channel] : (ca[channel]+cb[channel])/2.0;
+                assert(fabs(cm[channel]-expected)<=3);
+                if (ca[channel]!=cb[channel]) changed++;
+            }
+        }
+        assert(changed>100);
+    }
+    AtelierClockView *preview=[[AtelierClockView alloc] initWithFrame:NSMakeRect(0,0,256,256) isPreview:YES];
+    [preview acConfigureDesign:0 palette:0 appearance:0 numerals:NO];
+    [preview acSetDate:ACDate(@"2026-01-01T10:10:30Z")];
+    NSBitmapImageRep *a=ACShiftFrame(preview,0), *b=ACShiftFrame(preview,305);
+    assert(memcmp(a.bitmapData,b.bitmapData,a.bytesPerRow*a.pixelsHigh)==0);
+    puts("Display shift passed (timing, continuity, safe bounds, five-dial blending, stable previews).");
+}
+
 static void ACTestOptionsLifecycle(AtelierClockView *view) {
     NSWindow *host=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,700,500)
         styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];
@@ -70,6 +126,7 @@ static void ACTestOptionsLifecycle(AtelierClockView *view) {
 
 int main(int argc, const char *argv[]) {
     @autoreleasepool {
+        ACTestDisplayShift();
         BOOL options=argc>1 && strcmp(argv[1],"--options")==0;
         if (options) [NSApplication sharedApplication];
         BOOL seen[5][5]={0};

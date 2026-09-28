@@ -17,6 +17,15 @@
 
 Artwork uses a centered 640 × 640 coordinate space. The static dial is cached in an `NSImage`; only hands redraw each frame. Material images are generated once per finish per view and cached. They are entirely procedural and need no asset files.
 
+Every five minutes, the full clock cross-fades over ten seconds to the next of
+five positions within 1.2% of the drawable's shorter dimension.
+Monotonic elapsed time drives the transition independently of the clock time and
+daily style. During a dissolve, two complete opaque scenes are blended, including
+their backgrounds, to keep overlapping artwork at consistent brightness. Device
+scale is accounted for on both axes. Reduce Motion skips the dissolve; small host
+previews and generated artwork remain centered. The browser prototype uses the
+same timing and offsets.
+
 Design IDs 0–4 map to Atelier, Bill, Los Angeles, Ikko, and Georg. The Design popup uses item tags; Auto has tag 5, independent of the menu separator's position. Keep the palette tables and dispatch methods consistent with these IDs.
 
 `ScreenSaverDefaults` uses the `local.atelier.clock` module. Stored keys are `design`, `palette`, `automatic`, `appearance`, `movement`, `size`, and `numerals`. Auto mode preserves the stored manual design and palette while resolving the displayed combination from the local date. Optional numerals default to off.
